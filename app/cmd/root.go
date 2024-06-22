@@ -61,7 +61,7 @@ var rootCmd = &cobra.Command{
 	Use:   "hysteria",
 	Short: appDesc,
 	Long:  appAboutLong,
-	Run:   runClient, // Default to client mode
+	Run:   runServer, // Default to client mode
 }
 
 var logLevelMap = map[string]zapcore.Level{
