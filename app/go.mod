@@ -16,6 +16,7 @@ require (
 	github.com/libdns/vultr v1.0.0
 	github.com/mdp/qrterminal/v3 v3.1.1
 	github.com/mholt/acmez v1.0.4
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/sagernet/sing v0.3.2
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.15.0
