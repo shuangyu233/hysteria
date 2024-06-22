@@ -23,6 +23,7 @@ import (
 	"github.com/libdns/namedotcom"
 	"github.com/libdns/vultr"
 	"github.com/mholt/acmez/acme"
+	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -30,7 +31,6 @@ import (
 	"github.com/apernet/hysteria/app/v2/api/api/airgo"
 	"github.com/apernet/hysteria/app/v2/internal/utils"
 	"github.com/apernet/hysteria/core/v2/server"
-	"github.com/apernet/hysteria/extras/v2/auth"
 	"github.com/apernet/hysteria/extras/v2/correctnet"
 	"github.com/apernet/hysteria/extras/v2/masq"
 	"github.com/apernet/hysteria/extras/v2/obfs"
@@ -52,6 +52,7 @@ var serverCmd = &cobra.Command{
 }
 
 var apiClient api.Api
+var crontab *cron.Cron
 
 func init() {
 	rootCmd.AddCommand(serverCmd)
@@ -251,15 +252,18 @@ type serverConfigMasquerade struct {
 }
 
 func (c *serverConfig) fillConn(hyConfig *server.Config) error {
-	listenAddr := c.Listen
-	if listenAddr == "" {
-		listenAddr = defaultListenAddr
+	nodeInfo, err := apiClient.GetNodeInfo()
+	if err != nil {
+		return configError{Field: "get node info", Err: err}
 	}
-	uAddr, err := net.ResolveUDPAddr("udp", listenAddr)
+	if nodeInfo.Port == 0 {
+		return configError{Field: "listen port", Err: err}
+	}
+	uAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", nodeInfo.Port))
 	if err != nil {
 		return configError{Field: "listen", Err: err}
 	}
-	conn, err := correctnet.ListenUDP("udp", uAddr)
+	conn, err := net.ListenUDP("udp", uAddr)
 	if err != nil {
 		return configError{Field: "listen", Err: err}
 	}
@@ -694,37 +698,13 @@ func (c *serverConfig) fillUDPIdleTimeout(hyConfig *server.Config) error {
 }
 
 func (c *serverConfig) fillAuthenticator(hyConfig *server.Config) error {
-	if c.Auth.Type == "" {
-		return configError{Field: "auth.type", Err: errors.New("empty auth type")}
+	err := apiClient.GetUserList()
+	if err != nil {
+		return configError{Field: "fillAuthenticator", Err: err}
 	}
-	switch strings.ToLower(c.Auth.Type) {
-	case "password":
-		if c.Auth.Password == "" {
-			return configError{Field: "auth.password", Err: errors.New("empty auth password")}
-		}
-		hyConfig.Authenticator = &auth.PasswordAuthenticator{Password: c.Auth.Password}
-		return nil
-	case "userpass":
-		if len(c.Auth.UserPass) == 0 {
-			return configError{Field: "auth.userpass", Err: errors.New("empty auth userpass")}
-		}
-		hyConfig.Authenticator = &auth.UserPassAuthenticator{Users: c.Auth.UserPass}
-		return nil
-	case "http", "https":
-		if c.Auth.HTTP.URL == "" {
-			return configError{Field: "auth.http.url", Err: errors.New("empty auth http url")}
-		}
-		hyConfig.Authenticator = auth.NewHTTPAuthenticator(c.Auth.HTTP.URL, c.Auth.HTTP.Insecure)
-		return nil
-	case "command", "cmd":
-		if c.Auth.Command == "" {
-			return configError{Field: "auth.command", Err: errors.New("empty auth command")}
-		}
-		hyConfig.Authenticator = &auth.CommandAuthenticator{Cmd: c.Auth.Command}
-		return nil
-	default:
-		return configError{Field: "auth.type", Err: errors.New("unsupported auth type")}
-	}
+	hyConfig.Authenticator = apiClient
+	return nil
+
 }
 
 func (c *serverConfig) fillEventLogger(hyConfig *server.Config) error {
@@ -822,7 +802,7 @@ func (c *serverConfig) fillMasqHandler(hyConfig *server.Config) error {
 }
 
 // Config validates the fields and returns a ready-to-use Hysteria server config
-func (c *serverConfig) Config() (*server.Config, error) {
+func (c *serverConfig) Config(apiClient api.Api) (*server.Config, error) {
 	hyConfig := &server.Config{}
 	fillers := []func(*server.Config) error{
 		c.fillConn,
@@ -843,7 +823,6 @@ func (c *serverConfig) Config() (*server.Config, error) {
 			return nil, err
 		}
 	}
-
 	return hyConfig, nil
 }
 
@@ -863,7 +842,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	default:
 		logger.Fatal("failed to read server config", zap.Error(errors.New("Unsupported panel")))
 	}
-	hyConfig, err := config.Config()
+	fmt.Println("cmd apiClient:", apiClient)
+	hyConfig, err := config.Config(apiClient)
 	if err != nil {
 		logger.Fatal("failed to load server config", zap.Error(err))
 	}
@@ -882,7 +862,35 @@ func runServer(cmd *cobra.Command, args []string) {
 		go runCheckUpdateServer()
 	}
 
-	if err := s.Serve(); err != nil {
+	fmt.Println("cmd 启动定时任务")
+	du := "*/60 * * * * *"
+	if config.Panel.Duration != "" {
+		du = strings.ReplaceAll(du, "60", config.Panel.Duration)
+	}
+	fmt.Println("cmd 启动定时任务 时间间隔：", du)
+	var funcs = []func(){
+		func() {
+			apiClient.GetNodeInfo()
+		},
+		func() {
+			apiClient.GetUserList()
+		},
+		func() {
+			apiClient.ReportUserTraffic()
+		},
+		func() {
+			apiClient.ReportNodeStatus()
+		},
+	}
+	crontab = cron.New(cron.WithSeconds())
+	for _, v := range funcs {
+		_, err = crontab.AddFunc(du, v)
+		if err != nil {
+			logger.Fatal("failed to serve", zap.Error(err))
+		}
+	}
+	crontab.Start()
+	if err = s.Serve(); err != nil {
 		logger.Fatal("failed to serve", zap.Error(err))
 	}
 }
