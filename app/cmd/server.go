@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	"github.com/apernet/hysteria/app/v2/api/api/airgo"
 	"github.com/apernet/hysteria/app/v2/internal/utils"
 	"github.com/apernet/hysteria/core/v2/server"
 	"github.com/apernet/hysteria/extras/v2/auth"
@@ -35,10 +36,13 @@ import (
 	"github.com/apernet/hysteria/extras/v2/obfs"
 	"github.com/apernet/hysteria/extras/v2/outbounds"
 	"github.com/apernet/hysteria/extras/v2/trafficlogger"
+	"github.com/ppoonk/shy/app/api"
 )
 
 const (
-	defaultListenAddr = ":443"
+	defaultListenAddr  = ":443"
+	trafficStatsListen = "127.0.0.1:7654" //默认流量统计 API
+
 )
 
 var serverCmd = &cobra.Command{
@@ -47,11 +51,14 @@ var serverCmd = &cobra.Command{
 	Run:   runServer,
 }
 
+var apiClient api.Api
+
 func init() {
 	rootCmd.AddCommand(serverCmd)
 }
 
 type serverConfig struct {
+	Panel                 api.Panel                   `mapstructure:"panel"`
 	Listen                string                      `mapstructure:"listen"`
 	Obfs                  serverConfigObfs            `mapstructure:"obfs"`
 	TLS                   *serverConfigTLS            `mapstructure:"tls"`
@@ -849,6 +856,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	var config serverConfig
 	if err := viper.Unmarshal(&config); err != nil {
 		logger.Fatal("failed to parse server config", zap.Error(err))
+	}
+	switch config.Panel.PanelType {
+	case "AirGo":
+		apiClient = airgo.New(config.Panel)
+	default:
+		logger.Fatal("failed to read server config", zap.Error(errors.New("Unsupported panel")))
 	}
 	hyConfig, err := config.Config()
 	if err != nil {
