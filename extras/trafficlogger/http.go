@@ -22,7 +22,7 @@ type TrafficStatsServer interface {
 
 func NewTrafficStatsServer(secret string) TrafficStatsServer {
 	return &trafficStatsServerImpl{
-		StatsMap:  make(map[string]*trafficStatsEntry),
+		StatsMap:  make(map[string]*TrafficStatsEntry),
 		KickMap:   make(map[string]struct{}),
 		OnlineMap: make(map[string]int),
 		Secret:    secret,
@@ -31,13 +31,13 @@ func NewTrafficStatsServer(secret string) TrafficStatsServer {
 
 type trafficStatsServerImpl struct {
 	Mutex     sync.RWMutex
-	StatsMap  map[string]*trafficStatsEntry
+	StatsMap  map[string]*TrafficStatsEntry
 	OnlineMap map[string]int
 	KickMap   map[string]struct{}
 	Secret    string
 }
 
-type trafficStatsEntry struct {
+type TrafficStatsEntry struct {
 	Tx uint64 `json:"tx"`
 	Rx uint64 `json:"rx"`
 }
@@ -54,7 +54,7 @@ func (s *trafficStatsServerImpl) LogTraffic(id string, tx, rx uint64) (ok bool) 
 
 	entry, ok := s.StatsMap[id]
 	if !ok {
-		entry = &trafficStatsEntry{}
+		entry = &TrafficStatsEntry{}
 		s.StatsMap[id] = entry
 	}
 	entry.Tx += tx
@@ -109,7 +109,7 @@ func (s *trafficStatsServerImpl) getTraffic(w http.ResponseWriter, r *http.Reque
 	if bClear {
 		s.Mutex.Lock()
 		jb, err = json.Marshal(s.StatsMap)
-		s.StatsMap = make(map[string]*trafficStatsEntry)
+		s.StatsMap = make(map[string]*TrafficStatsEntry)
 		s.Mutex.Unlock()
 	} else {
 		s.Mutex.RLock()
